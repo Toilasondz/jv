@@ -1,32 +1,52 @@
-name: Build iOS Tweak (Theos)
+name: Build iOS Tweak (.dylib / .deb)
 
 on:
   push:
+    branches: [ "main", "master" ]
+  pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-13
+    # Dùng macos-latest để tránh bị kẹt ở các bản macos cũ hơn như macos-13
+    runs-on: macos-latest
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Setup Theos Environment
-        uses: themarcelor/theos-action@v1
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          theos-src: https://github.com/theos/theos.git
+          submodules: recursive
 
-      - name: Compile Package (.deb & .dylib)
+      - name: Setup iOS SDK & Theos Environment
         run: |
+          echo "=== Installing dependencies ==="
+          brew install ldid cmake ninja
+
+          echo "=== Setting up Theos ==="
+          export THEOS=~/theos
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          
+          # Tải iOS SDK (sử dụng SDK 14.5 / 16.5 tương thích tốt với arm64/arm64e)
+          curl -LO https://github.com/theos/sdks/archive/master.zip
+          unzip -q master.zip
+          mv sdks-master/* $THEOS/sdks/
+          rm -rf master.zip sdks-master
+
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+
+      - name: Compile Tweak via Theos
+        run: |
+          # Làm sạch và biên dịch gói Tweak
           make clean
           make package FINALPACKAGE=1
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+      - name: Upload Build Artifacts (.deb & .dylib)
+        uses: actions/upload-artifact@v4
         with:
-          name: VideoStarMacroTool-Package
+          name: VideoStarTool-Build
           path: |
             packages/*.deb
             .theos/obj/debug/*.dylib
             .theos/obj/*.dylib
+          if-no-files-found: warn
