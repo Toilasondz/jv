@@ -1,0 +1,9 @@
+Package: com.videostar.macrotool
+Name: VideoStarMacroTool
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0)
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Automated macro tweak for VideoStar: Auto Media Import & Beat Splitting.
+Maintainer: Senior Reverse Engineer
+Author: Reverse Engineering Specialist
+Section: Tweaks
