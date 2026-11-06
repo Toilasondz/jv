@@ -1,0 +1,32 @@
+name: Build iOS Tweak (Theos)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Theos Environment
+        uses: themarcelor/theos-action@v1
+        with:
+          theos-src: https://github.com/theos/theos.git
+
+      - name: Compile Package (.deb & .dylib)
+        run: |
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: VideoStarMacroTool-Package
+          path: |
+            packages/*.deb
+            .theos/obj/debug/*.dylib
+            .theos/obj/*.dylib
