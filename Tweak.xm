@@ -123,7 +123,6 @@ void VSSafePerformSelector(id _Nullable target, NSString *selectorName, id _Null
         return;
     }
 
-    // Fallback: Check if method has a single argument version
     NSString *colonSelName = [selectorName stringByAppendingString:@":"];
     SEL colonSel = NSSelectorFromString(colonSelName);
     if ([target respondsToSelector:colonSel]) {
@@ -134,6 +133,7 @@ void VSSafePerformSelector(id _Nullable target, NSString *selectorName, id _Null
     }
 }
 
+// Đã tối ưu hóa hàm giả lập chạm an toàn tuyệt đối, loại bỏ hoàn toàn UITouch thủ công gây crash iOS 14+
 void VSSimulateTapOnView(UIView * _Nullable targetView) {
     if (!targetView) return;
 
@@ -144,49 +144,52 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
         return;
     }
 
-    // 1. If it's a UIControl, trigger touch actions directly
+    // 1. Nếu là UIControl (UIButton, Switch,...), kích hoạt sự kiện TouchUpInside trực tiếp
     if ([targetView isKindOfClass:[UIControl class]]) {
         UIControl *control = (UIControl *)targetView;
         [control sendActionsForControlEvents:UIControlEventTouchUpInside];
         return;
     }
 
-    // 2. Check gesture recognizers
+    // 2. Kích hoạt gesture recognizer hợp lệ thông qua Runtime target/action
     for (UIGestureRecognizer *gesture in targetView.gestureRecognizers) {
         if ([gesture isKindOfClass:[UITapGestureRecognizer class]] && gesture.isEnabled) {
             UITapGestureRecognizer *tap = (UITapGestureRecognizer *)gesture;
-            // Retrieve target & action using KVC or standard invocation
-            UIGestureRecognizerState originalState = tap.state;
+            id target = nil;
+            SEL action = NULL;
+            
             @try {
-                [tap setValue:@(UIGestureRecognizerStateBegan) forKey:@"state"];
-                [tap setValue:@(UIGestureRecognizerStateEnded) forKey:@"state"];
+                NSArray *targets = [tap valueForKey:@"_targets"];
+                id targetContainer = targets.firstObject;
+                if (targetContainer) {
+                    target = [targetContainer valueForKey:@"_target"];
+                    NSValue *actionValue = [targetContainer valueForKey:@"_action"];
+                    if (actionValue) {
+                        action = (SEL)[actionValue pointerValue];
+                    }
+                }
             } @catch (NSException *e) {
-                MACRO_LOG(@"Gesture simulation exception: %@", e);
+                MACRO_LOG(@"Lỗi đọc Gesture Target: %@", e);
             }
-            return;
+
+            if (target && action && [target respondsToSelector:action]) {
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [target performSelector:action withObject:tap];
+                #pragma clang diagnostic pop
+                return;
+            }
         }
     }
 
-    // 3. Fallback: Dispatch touchesBegan and touchesEnded
-    CGPoint center = CGPointMake(CGRectGetMidX(targetView.bounds), CGRectGetMidY(targetView.bounds));
-    UIEvent *event = [[UIEvent alloc] init];
-    UITouch *touch = [[UITouch alloc] init];
-    @try {
-        [touch setValue:targetView.window forKey:@"window"];
-        [touch setValue:targetView forKey:@"view"];
-        [touch setValue:[NSValue valueWithCGPoint:center] forKey:@"locationInWindow"];
-        NSSet *touches = [NSSet setWithObject:touch];
-
-        if ([targetView respondsToSelector:@selector(touchesBegan:withEvent:)]) {
-            [targetView touchesBegan:touches withEvent:event];
-        }
+    // 3. Fallback an toàn cho Custom View
+    if ([targetView respondsToSelector:@selector(touchesBegan:withEvent:)]) {
+        [targetView touchesBegan:[NSSet set] withEvent:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if ([targetView respondsToSelector:@selector(touchesEnded:withEvent:)]) {
-                [targetView touchesEnded:touches withEvent:event];
+                [targetView touchesEnded:[NSSet set] withEvent:nil];
             }
         });
-    } @catch (NSException *e) {
-        MACRO_LOG(@"Touch dispatch fallback caught exception: %@", e);
     }
 }
 
@@ -205,7 +208,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     UIWindow *window = VSGetActiveKeyWindow();
     if (!window) return;
 
-    // Remove existing toast if any
     UIView *oldToast = [window viewWithTag:998877];
     if (oldToast) {
         [oldToast removeFromSuperview];
@@ -288,21 +290,17 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     self.layer.borderWidth = 1.8;
     self.layer.borderColor = [UIColor colorWithRed:0.20 green:0.75 blue:1.00 alpha:0.85].CGColor;
     
-    // Add shadow
     self.layer.shadowColor = [UIColor colorWithRed:0.20 green:0.75 blue:1.00 alpha:0.6].CGColor;
     self.layer.shadowOffset = CGSizeMake(0, 3);
     self.layer.shadowOpacity = 0.7;
     self.layer.shadowRadius = 8;
 
-    // Title / Icon
     [self setTitle:@"⭐" forState:UIControlStateNormal];
     self.titleLabel.font = [UIFont systemFontOfSize:26];
 
-    // Drag gesture
     self.panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [self addGestureRecognizer:self.panGesture];
 
-    // Tap action
     [self addTarget:self action:@selector(handleTap) forControlEvents:UIControlEventTouchUpInside];
 }
 
@@ -349,7 +347,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     [pan setTranslation:CGPointZero inView:superView];
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        // Snap to closest screen edge (Left or Right)
         CGFloat midX = superView.bounds.size.width / 2.0;
         CGFloat targetX = (self.center.x < midX) ? minX : maxX;
 
@@ -376,28 +373,24 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
                                                                    message:@"Chọn chức năng tự động hóa cần thực hiện:"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    // Option 1: Auto Nhập Ảnh/Video vào Lớp
     UIAlertAction *actionImport = [UIAlertAction actionWithTitle:@"🖼️ [Auto Nhập Ảnh/Video vào Lớp]"
                                                            style:UIAlertActionStyleDefault
                                                          handler:^(UIAlertAction * _Nonnull action) {
         [[VideoStarMacroEngine sharedEngine] startAutoImportMedia];
     }];
 
-    // Option 2: Auto Chia Đoạn Theo Beat
     UIAlertAction *actionBeat = [UIAlertAction actionWithTitle:@"🎵 [Auto Chia Đoạn Theo Beat]"
                                                          style:UIAlertActionStyleDefault
                                                        handler:^(UIAlertAction * _Nonnull action) {
         [self showBeatSplitOptionsDialog];
     }];
 
-    // Option 3: Dừng Macro Khẩn Cấp
     UIAlertAction *actionStop = [UIAlertAction actionWithTitle:@"⏹️ [Dừng Macro Đang Chạy]"
                                                          style:UIAlertActionStyleDestructive
                                                        handler:^(UIAlertAction * _Nonnull action) {
         [[VideoStarMacroEngine sharedEngine] stopAllMacros];
     }];
 
-    // Option 4: Đóng Menu
     UIAlertAction *actionCancel = [UIAlertAction actionWithTitle:@"❌ Đóng"
                                                            style:UIAlertActionStyleCancel
                                                          handler:nil];
@@ -409,7 +402,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     }
     [sheet addAction:actionCancel];
 
-    // iPad compatibility protection
     if (sheet.popoverPresentationController) {
         sheet.popoverPresentationController.sourceView = self;
         sheet.popoverPresentationController.sourceRect = self.bounds;
@@ -488,13 +480,11 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
 - (BOOL)isLayerEligibleForMediaImport:(UIView *)layerCellView {
     if (!layerCellView) return NO;
 
-    // Build inspection text from accessibility info & subviews
     NSMutableString *info = [NSMutableString string];
     if (layerCellView.accessibilityLabel) [info appendFormat:@"%@ ", layerCellView.accessibilityLabel];
     if (layerCellView.accessibilityIdentifier) [info appendFormat:@"%@ ", layerCellView.accessibilityIdentifier];
     [info appendFormat:@"%@ ", NSStringFromClass([layerCellView class])];
 
-    // Traverse inner labels and controls
     for (UIView *sub in layerCellView.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             UILabel *lbl = (UILabel *)sub;
@@ -504,7 +494,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
 
     NSString *lowercased = info.lowercaseString;
 
-    // RÀNG BUỘC: Tuyệt đối bỏ qua các lớp không phải hình ảnh/video
     NSArray<NSString *> *forbiddenKeywords = @[
         @"empty", @"rỗng", @"trống",
         @"zap", @"zaps",
@@ -516,7 +505,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
 
     for (NSString *forbidden in forbiddenKeywords) {
         if ([lowercased containsString:forbidden]) {
-            MACRO_LOG(@"Bỏ qua lớp không hợp lệ: chứa từ khóa '%@'", forbidden);
             return NO;
         }
     }
@@ -536,10 +524,8 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
         return;
     }
 
-    // Tìm tất cả các lớp layer buttons cell trên thanh quản lý lớp bên phải
     NSArray<UIView *> *allLayerCells = VSFindAllSubviewsOfClass(window, @"MLLayerButtonsCellLayerView");
     if (allLayerCells.count == 0) {
-        // Fallback: Tìm các cell chứa "LayerCell" hoặc "LayerButton"
         allLayerCells = VSFindAllSubviewsOfClass(window, @"LayerButtonsCell");
     }
 
@@ -548,7 +534,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
         return;
     }
 
-    // Lọc chỉ giữ lại các lớp hợp lệ (chứa media hình ảnh / video)
     NSMutableArray<UIView *> *validLayers = [NSMutableArray array];
     for (UIView *cell in allLayerCells) {
         if ([self isLayerEligibleForMediaImport:cell]) {
@@ -561,7 +546,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
         return;
     }
 
-    // Sắp xếp các cell theo thứ tự trục Y từ trên xuống dưới
     [validLayers sortUsingComparator:^NSComparisonResult(UIView *v1, UIView *v2) {
         CGPoint p1 = [v1 convertPoint:CGPointZero toView:nil];
         CGPoint p2 = [v2 convertPoint:CGPointZero toView:nil];
@@ -588,7 +572,7 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     if (index >= (NSInteger)layerList.count) {
         self.isRunning = NO;
         [MacroToastHUD showMessage:@"✅ Đã hoàn tất nhập toàn bộ ảnh/video!" duration:2.5];
-        AudioServicesPlaySystemSound(1519); // Peek haptic
+        AudioServicesPlaySystemSound(1519);
         return;
     }
 
@@ -596,19 +580,14 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     NSString *status = [NSString stringWithFormat:@"Đang xử lý lớp %ld/%lu...", (long)(index + 1), (unsigned long)layerList.count];
     [MacroToastHUD showMessage:status duration:1.8];
 
-    // BƯỚC 1: Mô phỏng chạm vào lớp đối tượng trên thanh quản lý lớp
     VSSimulateTapOnView(currentLayerCell);
 
-    // Chờ 0.35s để UI phản hồi mở thanh công cụ/menu của lớp
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (self.shouldCancel) { self.isRunning = NO; return; }
 
         UIWindow *win = VSGetActiveKeyWindow();
-
-        // BƯỚC 2: Kích hoạt trình đơn thay thế nội dung (CustomPopup hoặc CustomUIButton)
         UIView *replaceButton = nil;
 
-        // Tìm CustomUIButton có tiêu đề hoặc hành động liên quan tới Replace/Thay thế
         NSArray<UIView *> *customButtons = VSFindAllSubviewsOfClass(win, @"CustomUIButton");
         for (UIView *btnView in customButtons) {
             if ([btnView isKindOfClass:[UIButton class]]) {
@@ -624,45 +603,32 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
             }
         }
 
-        // Nếu không thấy qua text, tìm CustomPopup
         if (!replaceButton) {
             UIView *popup = VSFindFirstSubviewOfClass(win, @"CustomPopup");
             if (popup) {
-                // Lấy nút đầu tiên bên trong popup
                 replaceButton = VSFindFirstSubviewOfClass(popup, @"UIButton") ?: popup;
             }
         }
 
         if (replaceButton) {
             VSSimulateTapOnView(replaceButton);
-        } else {
-            MACRO_LOG(@"Không tìm thấy nút Replace trực tiếp, thử quét ClipPicker...");
         }
 
-        // Chờ 0.40s để bộ chọn ảnh/video ClipPicker xuất hiện
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.40 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.shouldCancel) { self.isRunning = NO; return; }
 
             UIWindow *w = VSGetActiveKeyWindow();
-
-            // BƯỚC 3: Gọi bộ chọn ảnh/video (ClipPickerCollectionViewCellImageView)
             NSArray<UIView *> *pickerCells = VSFindAllSubviewsOfClass(w, @"ClipPickerCollectionViewCellImageView");
             if (pickerCells.count == 0) {
-                // Thử tìm theo dạng class con hoặc image view trong picker
                 pickerCells = VSFindAllSubviewsOfClass(w, @"ClipPicker");
             }
 
             if (pickerCells.count > 0) {
-                // Chọn item đầu tiên hoặc item tương ứng theo index
                 NSInteger itemIdx = MIN((NSInteger)pickerCells.count - 1, index);
                 UIView *targetMediaCell = pickerCells[itemIdx];
                 VSSimulateTapOnView(targetMediaCell);
-                MACRO_LOG(@"Đã chọn phương tiện tại cell chỉ mục: %ld", (long)itemIdx);
-            } else {
-                MACRO_LOG(@"Không tìm thấy ClipPickerCollectionViewCellImageView tại bước %ld", (long)index);
             }
 
-            // Chờ 0.45s cho media nạp hoàn tất vào layer rồi tiếp tục lớp tiếp theo
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [self processImportStepForLayerIndex:index + 1 inList:layerList];
             });
@@ -681,7 +647,6 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     UIWindow *window = VSGetActiveKeyWindow();
     if (!window) return;
 
-    // Tìm kiếm BeatControlsView và MultiSplitView
     UIView *beatControls = VSFindFirstSubviewOfClass(window, @"BeatControlsView");
     UIView *multiSplitView = VSFindFirstSubviewOfClass(window, @"MultiSplitView");
 
@@ -695,16 +660,12 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
 
     [MacroToastHUD showMessage:@"Khởi động bảng điều khiển Beat..." duration:1.5];
 
-    // BƯỚC 1: Mô phỏng bật bảng điều khiển beat (gọi selector toggleAction)
     if (beatControls) {
         VSSafePerformSelector(beatControls, @"toggleAction", nil);
     }
 
-    // Chờ 0.3s để bảng điều khiển beat đồng bộ
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (self.shouldCancel) { self.isRunning = NO; return; }
-
-        // BƯỚC 2: Bắt đầu chuỗi lặp điều hướng nhịp và đặt điểm chia
         [self performBeatSplitIteration:1 total:splitCount interval:interval];
     });
 }
@@ -726,14 +687,13 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     }
 
     if (currentStep > totalSteps) {
-        // BƯỚC 3: Thực hiện điểm chia cuối cùng bằng selector doSplit
         [MacroToastHUD showMessage:@"Đang thực hiện cắt phân cảnh (doSplit)..." duration:1.5];
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             VSSafePerformSelector(multiSplitView, @"doSplit", nil);
             self.isRunning = NO;
             [MacroToastHUD showMessage:@"🎉 Hoàn thành chia beat & cắt phân cảnh!" duration:2.5];
-            AudioServicesPlaySystemSound(1519); // Success haptic
+            AudioServicesPlaySystemSound(1519);
         });
         return;
     }
@@ -741,18 +701,15 @@ void VSSimulateTapOnView(UIView * _Nullable targetView) {
     NSString *msg = [NSString stringWithFormat:@"🎵 Đang chia Beat: %ld/%ld", (long)currentStep, (long)totalSteps];
     [MacroToastHUD showMessage:msg duration:interval + 0.1];
 
-    // Gửi selector nextAction tới BeatControlsView
     if (beatControls) {
         VSSafePerformSelector(beatControls, @"nextAction", nil);
     }
 
-    // Thiết lập điểm chia setSplitPoint trên MultiSplitView
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (self.shouldCancel) { self.isRunning = NO; return; }
 
         VSSafePerformSelector(multiSplitView, @"setSplitPoint", nil);
 
-        // Lặp tiếp bước sau với khoảng thời gian delay thực tế định sẵn
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(interval * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self performBeatSplitIteration:currentStep + 1 total:totalSteps interval:interval];
         });
@@ -778,12 +735,10 @@ static void InitializeMacroToolUI(void) {
 - (void)setDelegate:(id<UIApplicationDelegate>)delegate {
     %orig;
 
-    // Quan sát sự kiện hoàn tất khởi động ứng dụng
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                       object:nil
                                                        queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification * _Nonnull note) {
-        // Trì hoãn 2.5 giây theo đúng yêu cầu để View Hierarchy hoàn toàn ổn định
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             InitializeMacroToolUI();
         });
@@ -798,7 +753,6 @@ static void InitializeMacroToolUI(void) {
 
 - (void)makeKeyAndVisible {
     %orig;
-    // Failsafe: Tái kiểm tra và đính kèm lại nút nổi nếu window thay đổi
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (![self viewWithTag:998877]) {
             [[MacroFloatingButton sharedButton] attachToKeyWindow];
@@ -814,7 +768,6 @@ static void InitializeMacroToolUI(void) {
     @autoreleasepool {
         MACRO_LOG(@"=== VideoStarMacroTool Tweak Injected Successfully ===");
         
-        // Backup timer trong trường hợp notification đã phát trước khi dylib inject
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             InitializeMacroToolUI();
         });
