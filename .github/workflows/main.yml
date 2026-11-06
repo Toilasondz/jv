@@ -26,9 +26,11 @@ jobs:
           export THEOS=~/theos
           git clone --recursive https://github.com/theos/theos.git $THEOS
           
+          echo "=== Downloading & Setting up iOS SDKs ==="
+          mkdir -p $THEOS/sdks
           curl -LO https://github.com/theos/sdks/archive/master.zip
           unzip -q master.zip
-          mv sdks-master/* $THEOS/sdks/
+          cp -R sdks-master/* $THEOS/sdks/
           rm -rf master.zip sdks-master
 
           echo "THEOS=$THEOS" >> $GITHUB_ENV
