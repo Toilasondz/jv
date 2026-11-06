@@ -1,4 +1,4 @@
-name: Build iOS Tweak (.dylib / .deb)
+name: Build VideoStar Macro Tool
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 
 jobs:
   build:
-    # Dùng macos-latest để tránh bị kẹt ở các bản macos cũ hơn như macos-13
     runs-on: macos-latest
 
     steps:
@@ -20,14 +19,13 @@ jobs:
 
       - name: Setup iOS SDK & Theos Environment
         run: |
-          echo "=== Installing dependencies ==="
+          echo "=== Installing Dependencies ==="
           brew install ldid cmake ninja
 
           echo "=== Setting up Theos ==="
           export THEOS=~/theos
           git clone --recursive https://github.com/theos/theos.git $THEOS
           
-          # Tải iOS SDK (sử dụng SDK 14.5 / 16.5 tương thích tốt với arm64/arm64e)
           curl -LO https://github.com/theos/sdks/archive/master.zip
           unzip -q master.zip
           mv sdks-master/* $THEOS/sdks/
@@ -35,16 +33,15 @@ jobs:
 
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
-      - name: Compile Tweak via Theos
+      - name: Compile Tweak (.dylib / .deb)
         run: |
-          # Làm sạch và biên dịch gói Tweak
           make clean
           make package FINALPACKAGE=1
 
-      - name: Upload Build Artifacts (.deb & .dylib)
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStarTool-Build
+          name: VideoStarMacroTool-Build
           path: |
             packages/*.deb
             .theos/obj/debug/*.dylib
